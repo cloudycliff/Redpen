@@ -1,0 +1,14 @@
+{
+  "name": "personal-writing-system",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "pnpm --parallel --filter @writing/server --filter @writing/web dev",
+    "dev:server": "pnpm --filter @writing/server dev",
+    "dev:web": "pnpm --filter @writing/web dev",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test"
+  }
+}
