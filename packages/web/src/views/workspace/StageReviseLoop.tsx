@@ -24,7 +24,11 @@ import type {
   WritingIntent,
 } from "@writing/core/types";
 import { api } from "../../api/client";
-import { DraftDiffViewer } from "../../components/DraftDiffViewer";
+import { DiagnosisView } from "../../components/DiagnosisView";
+import {
+  DraftDiffViewer,
+  type RevisionOption,
+} from "../../components/DraftDiffViewer";
 import { SettleModal } from "../../components/SettleModal";
 
 interface StageReviseLoopProps {
@@ -63,9 +67,9 @@ export function StageReviseLoop({
   const [saveState, setSaveState] = useState<"saved" | "saving" | "dirty">("saved");
   const [diffMode, setDiffMode] = useState(false);
   const [diffParts, setDiffParts] = useState<TextDiffPart[]>([]);
-  const [diffFromVersion, setDiffFromVersion] = useState(
-    Math.max(1, currentVersion - 1)
-  );
+  const [diffFromRev, setDiffFromRev] = useState<string>("raw");
+  const [diffToRev, setDiffToRev] = useState<string>(`v${currentVersion}`);
+  const [loadingDiff, setLoadingDiff] = useState(false);
   const [refTab, setRefTab] = useState<null | "lb" | "map" | "raw">(null);
 
   // Always-visible Writing Intent anchor bar (3rd touchpoint)
@@ -76,6 +80,7 @@ export function StageReviseLoop({
 
   // Text selection quote for asking Editor
   const editorRef = useRef<HTMLTextAreaElement | null>(null);
+  const chatInputRef = useRef<HTMLTextAreaElement | null>(null);
   const [selectionQuote, setSelectionQuote] = useState("");
   const [attachedQuote, setAttachedQuote] = useState("");
 
@@ -176,23 +181,55 @@ export function StageReviseLoop({
     setSaveState("saved");
   };
 
+  const revisionOptions: RevisionOption[] = [
+    { id: "raw", label: "原始口述" },
+    ...(article.clean_diff ? [{ id: "cleaned", label: "清洗底稿" }] : []),
+    ...article.draft_versions.map((v) => ({
+      id: `v${v}`,
+      label: v === currentVersion ? `v${v}（当前稿）` : `v${v}`,
+    })),
+    ...(article.final_markdown ? [{ id: "final", label: "最终定稿" }] : []),
+  ];
+
+  const loadDiffRange = async (fromRev: string, toRev: string) => {
+    setDiffFromRev(fromRev);
+    setDiffToRev(toRev);
+    setLoadingDiff(true);
+    try {
+      const res = await api.getDraftDiff(slug, fromRev, toRev);
+      setDiffParts(res.parts);
+    } catch (err) {
+      onError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoadingDiff(false);
+    }
+  };
+
   const handleToggleDiff = async () => {
     if (diffMode) {
       setDiffMode(false);
       return;
     }
     await flushCurrentDraft();
-    const fromV = Math.max(1, viewingVersion - 1);
-    const toV = viewingVersion === 1 && currentVersion > 1 ? 2 : viewingVersion;
-    const actualFrom = fromV === toV ? Math.max(1, toV - 1) : fromV;
-    setDiffFromVersion(actualFrom);
-    try {
-      const res = await api.getDraftDiff(slug, actualFrom, toV);
-      setDiffParts(res.parts);
-      setDiffMode(true);
-    } catch (err) {
-      onError(err instanceof Error ? err.message : String(err));
+    const defaultFrom =
+      currentVersion > 1 ? `v${currentVersion - 1}` : "raw";
+    const defaultTo = `v${currentVersion}`;
+    setDiffMode(true);
+    await loadDiffRange(defaultFrom, defaultTo);
+  };
+
+  const handleDiscussFromDiagnosis = (quote: string, starterPrefix?: string) => {
+    setAttachedQuote(quote);
+    if (starterPrefix && !chatInput.trim()) {
+      setChatInput(starterPrefix);
     }
+    setTimeout(() => {
+      const el = chatInputRef.current;
+      if (el) {
+        el.focus();
+        el.setSelectionRange(el.value.length, el.value.length);
+      }
+    }, 30);
   };
 
   const handleEditorSelect = () => {
@@ -358,21 +395,17 @@ export function StageReviseLoop({
               </button>
             ))}
 
-            {article.draft_versions.length >= 2 && (
-              <button
-                onClick={handleToggleDiff}
-                className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs transition border ${
-                  diffMode
-                    ? "bg-amber-50 text-amber-900 border-amber-300 font-medium"
-                    : "bg-white text-[#57534E] border-[#D6D3CB] hover:bg-[#FAF9F5]"
-                }`}
-              >
-                <GitCompare size={13} />
-                {diffMode
-                  ? "返回编辑"
-                  : `对比 v${Math.max(1, viewingVersion - 1)}→v${viewingVersion === 1 ? 2 : viewingVersion}`}
-              </button>
-            )}
+            <button
+              onClick={handleToggleDiff}
+              className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs transition border ${
+                diffMode
+                  ? "bg-amber-50 text-amber-900 border-amber-300 font-medium"
+                  : "bg-white text-[#57534E] border-[#D6D3CB] hover:bg-[#FAF9F5]"
+              }`}
+            >
+              <GitCompare size={13} />
+              {diffMode ? "返回编辑" : "版本演变 Diff"}
+            </button>
           </div>
 
           <div className="flex items-center gap-1">
@@ -510,11 +543,14 @@ export function StageReviseLoop({
           {diffMode ? (
             <div className="max-w-2xl mx-auto">
               <DraftDiffViewer
-                fromVersion={diffFromVersion}
-                toVersion={
-                  viewingVersion === 1 && currentVersion > 1 ? 2 : viewingVersion
-                }
+                options={revisionOptions}
+                fromRev={diffFromRev}
+                toRev={diffToRev}
                 parts={diffParts}
+                loading={loadingDiff}
+                onChangeRange={(nextFrom, nextTo) =>
+                  void loadDiffRange(nextFrom, nextTo)
+                }
               />
             </div>
           ) : (
@@ -715,11 +751,13 @@ export function StageReviseLoop({
                             </span>
                           </div>
                         )}
-                        <div className="markdown-body">
-                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                            {displayedDiagnosis}
-                          </ReactMarkdown>
-                        </div>
+                        <DiagnosisView
+                          markdown={displayedDiagnosis}
+                          canReply={
+                            selectedRound.status === "active" && !isDiagnosing
+                          }
+                          onDiscuss={handleDiscussFromDiagnosis}
+                        />
                       </>
                     ) : isDiagnosing ? (
                       <div className="flex items-center gap-2 text-xs text-[#78716C] py-3">
@@ -854,6 +892,7 @@ export function StageReviseLoop({
               )}
               <div className="flex gap-2 items-end">
                 <textarea
+                  ref={chatInputRef}
                   rows={2}
                   value={chatInput}
                   onChange={(e) => setChatInput(e.target.value)}

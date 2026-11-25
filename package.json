@@ -7,6 +7,8 @@
     "dev": "pnpm --parallel --filter @writing/server --filter @writing/web dev",
     "dev:server": "pnpm --filter @writing/server dev",
     "dev:web": "pnpm --filter @writing/web dev",
+    "start": "pnpm build && pnpm --filter @writing/server start",
+    "serve": "pnpm --filter @writing/server start",
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test"

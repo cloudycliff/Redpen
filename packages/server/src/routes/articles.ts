@@ -211,12 +211,33 @@ export function createArticlesRoutes(ctx: ServerContext): Hono {
 
   app.get("/:slug/diff", async (c) => {
     const slug = c.req.param("slug");
-    const fromV = Number(c.req.query("from"));
-    const toV = Number(c.req.query("to"));
-    const oldText = (await ctx.store.getDraft(slug, fromV)) ?? "";
-    const newText = (await ctx.store.getDraft(slug, toV)) ?? "";
+    const detail = await ctx.store.getArticle(slug);
+    if (!detail) return c.json({ error: "未找到该文章项目" }, 404);
+
+    const resolveRev = async (rev: string): Promise<string> => {
+      if (rev === "raw") return detail.raw_source;
+      if (rev === "cleaned") {
+        return detail.clean_diff?.cleaned_text ?? detail.raw_source;
+      }
+      if (rev === "final") {
+        return detail.final_markdown ?? detail.current_draft;
+      }
+      const m = rev.match(/^v?(\d+)$/);
+      if (m) {
+        return (await ctx.store.getDraft(slug, Number(m[1]))) ?? "";
+      }
+      return "";
+    };
+
+    const fromRev = c.req.query("from") || "raw";
+    const toRev =
+      c.req.query("to") || `v${detail.meta.current_draft_version}`;
+    const [oldText, newText] = await Promise.all([
+      resolveRev(fromRev),
+      resolveRev(toRev),
+    ]);
     const parts = computeDraftDiffParts(oldText, newText);
-    return c.json({ from: fromV, to: toV, parts });
+    return c.json({ from: fromRev, to: toRev, parts });
   });
 
   app.post("/:slug/rounds/:round/diagnose", async (c) => {

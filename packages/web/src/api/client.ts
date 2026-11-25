@@ -241,9 +241,9 @@ export const api = {
         body: JSON.stringify({ content }),
       }
     ),
-  getDraftDiff: (slug: string, from: number, to: number) =>
-    request<{ from: number; to: number; parts: TextDiffPart[] }>(
-      `/api/articles/${encodeURIComponent(slug)}/diff?from=${from}&to=${to}`
+  getDraftDiff: (slug: string, from: string, to: string) =>
+    request<{ from: string; to: string; parts: TextDiffPart[] }>(
+      `/api/articles/${encodeURIComponent(slug)}/diff?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`
     ),
   streamDiagnose: (
     slug: string,
