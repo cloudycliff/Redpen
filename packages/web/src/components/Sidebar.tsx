@@ -40,10 +40,7 @@ export function Sidebar({
         {!collapsed && (
           <div className="min-w-0">
             <div className="text-sm font-semibold tracking-wide text-[#1F1E1C] truncate">
-              承重墙 · 写作台
-            </div>
-            <div className="text-[11px] text-[#78716C] truncate">
-              Local-first 思想工坊
+              写作台
             </div>
           </div>
         )}
