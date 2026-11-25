@@ -9,3 +9,4 @@ export * from "./engines/structure.js";
 export * from "./engines/archive.js";
 export * from "./engines/editor.js";
 export * from "./engines/publish.js";
+export * from "./engines/wechatHtml.js";

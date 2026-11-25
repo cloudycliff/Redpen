@@ -16,9 +16,15 @@ import {
   ARCHIVE_EXTRACT_SYSTEM,
   COMPLIANCE_PRIVACY_SYSTEM,
   TITLE_COCREATION_SYSTEM,
+  WECHAT_PACKAGING_SYSTEM,
   formatLoadBearingList,
   formatWritingIntent,
 } from "../prompts/templates.js";
+import type {
+  IllustrationIdea,
+  WechatPackaging,
+  WechatThemeId,
+} from "../types.js";
 
 export async function generateTitleCandidates(params: {
   llm: LLMClient;
@@ -178,4 +184,63 @@ export async function extractArchiveCandidates(params: {
     }));
 
   return { stances, experiences };
+}
+
+export async function generateWechatPackaging(params: {
+  llm: LLMClient;
+  title: string;
+  draftText: string;
+  loadBearing: LoadBearingSentence[];
+  intent: WritingIntent;
+  existing?: Partial<WechatPackaging>;
+}): Promise<WechatPackaging> {
+  const raw = await params.llm.complete({
+    tier: "deep",
+    temperature: 0.5,
+    messages: [
+      { role: "system", content: WECHAT_PACKAGING_SYSTEM },
+      {
+        role: "user",
+        content: `## 文章标题\n${params.title || "（暂未定标题）"}\n\n## 写作初衷\n${formatWritingIntent(params.intent)}\n\n## 锁定的承重句\n${formatLoadBearingList(params.loadBearing)}\n\n## 文章正文\n${params.draftText}`,
+      },
+    ],
+  });
+
+  const parsed = parseLLMJson<{
+    digest_candidates?: string[];
+    illustration_ideas?: Array<{
+      placement?: string;
+      concept?: string;
+      style?: string;
+      prompt_hint?: string;
+    }>;
+  }>(raw);
+
+  const digestCandidates = Array.isArray(parsed.digest_candidates)
+    ? parsed.digest_candidates
+        .filter((d): d is string => typeof d === "string" && d.trim().length > 0)
+        .map((d) => d.trim())
+        .slice(0, 3)
+    : [];
+
+  const illustrationIdeas: IllustrationIdea[] = (parsed.illustration_ideas ?? [])
+    .filter((i) => i && typeof i.concept === "string" && i.concept.trim())
+    .slice(0, 4)
+    .map((i, idx) => ({
+      id: `illus-${idx + 1}-${crypto.randomBytes(2).toString("hex")}`,
+      placement: i.placement?.trim() || "正文配图",
+      concept: i.concept!.trim(),
+      style: i.style?.trim() || "极简配图",
+      prompt_hint: i.prompt_hint?.trim() || "",
+    }));
+
+  const theme: WechatThemeId = params.existing?.theme ?? "editorial_ink";
+  return {
+    theme,
+    highlight_load_bearing: params.existing?.highlight_load_bearing ?? false,
+    digest: params.existing?.digest?.trim() || digestCandidates[0] || "",
+    digest_candidates: digestCandidates,
+    illustration_ideas: illustrationIdeas,
+    generated_at: new Date().toISOString(),
+  };
 }

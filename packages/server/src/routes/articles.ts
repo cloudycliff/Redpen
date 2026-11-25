@@ -9,7 +9,9 @@ import {
   generateCleanDiff,
   generateStructureMap,
   generateTitleCandidates,
+  generateWechatPackaging,
   previewRoundSettlement,
+  renderWechatHtml,
   retrieveRelevantArchives,
   runCompliancePrivacyGate,
   streamNextRoundDiagnosis,
@@ -20,6 +22,8 @@ import {
   type FindingStatus,
   type LoadBearingSentence,
   type RoundRecord,
+  type WechatPackaging,
+  type WechatThemeId,
   type WritingIntent,
 } from "@writing/core";
 import type { ServerContext } from "../context.js";
@@ -55,6 +59,7 @@ export function createArticlesRoutes(ctx: ServerContext): Hono {
       writing_intent?: Partial<WritingIntent>;
       load_bearing_sentences?: LoadBearingSentence[];
       selected_title_id?: string;
+      wechat_packaging?: Partial<WechatPackaging>;
     }>();
 
     const meta = { ...detail.meta };
@@ -76,6 +81,22 @@ export function createArticlesRoutes(ctx: ServerContext): Hono {
         (tc) => tc.id === body.selected_title_id
       );
       if (chosen) meta.title = chosen.title;
+    }
+    if (body.wechat_packaging) {
+      const prev: WechatPackaging = meta.publish_meta?.wechat_packaging ?? {
+        theme: "editorial_ink",
+        highlight_load_bearing: false,
+        digest: "",
+        digest_candidates: [],
+        illustration_ideas: [],
+      };
+      meta.publish_meta = {
+        ...meta.publish_meta,
+        platform: "wechat_mp",
+        published_at: meta.publish_meta?.published_at ?? null,
+        retrospective_note: meta.publish_meta?.retrospective_note ?? null,
+        wechat_packaging: { ...prev, ...body.wechat_packaging },
+      };
     }
 
     const updated = await ctx.store.saveArticleMeta(slug, meta);
@@ -684,6 +705,75 @@ export function createArticlesRoutes(ctx: ServerContext): Hono {
       saved_stances: savedStances,
       saved_experiences: savedExperiences,
     });
+  });
+
+  app.post("/:slug/wechat-packaging", async (c) => {
+    const slug = c.req.param("slug");
+    const detail = await ctx.store.getArticle(slug);
+    if (!detail) return c.json({ error: "未找到该文章项目" }, 404);
+
+    const packaging = await generateWechatPackaging({
+      llm: ctx.llm,
+      title: detail.meta.title || detail.meta.working_title,
+      draftText: detail.current_draft,
+      loadBearing: detail.meta.load_bearing_sentences,
+      intent: detail.meta.writing_intent,
+      existing: detail.meta.publish_meta?.wechat_packaging,
+    });
+
+    const meta = await ctx.store.saveArticleMeta(slug, {
+      ...detail.meta,
+      publish_meta: {
+        ...detail.meta.publish_meta,
+        platform: "wechat_mp",
+        published_at: detail.meta.publish_meta?.published_at ?? null,
+        retrospective_note: detail.meta.publish_meta?.retrospective_note ?? null,
+        wechat_packaging: packaging,
+      },
+    });
+
+    return c.json({ packaging, meta });
+  });
+
+  app.post("/:slug/wechat-html", async (c) => {
+    const slug = c.req.param("slug");
+    const detail = await ctx.store.getArticle(slug);
+    if (!detail) return c.json({ error: "未找到该文章项目" }, 404);
+
+    const body = await c.req
+      .json<{
+        theme?: WechatThemeId;
+        highlight_load_bearing?: boolean;
+        markdown?: string;
+      }>()
+      .catch(() => ({
+        theme: undefined,
+        highlight_load_bearing: undefined,
+        markdown: undefined,
+      }));
+
+    const theme: WechatThemeId =
+      body.theme ??
+      detail.meta.publish_meta?.wechat_packaging?.theme ??
+      "editorial_ink";
+    const highlight =
+      body.highlight_load_bearing ??
+      detail.meta.publish_meta?.wechat_packaging?.highlight_load_bearing ??
+      false;
+
+    const lockedSentences = detail.meta.load_bearing_sentences
+      .filter((s) => s.locked)
+      .map((s) => s.text);
+
+    const html = renderWechatHtml({
+      markdown: body.markdown ?? detail.current_draft,
+      theme,
+      highlightLoadBearing: highlight,
+      loadBearingSentences: lockedSentences,
+    });
+
+    const savedPath = await ctx.store.saveWechatHtml(slug, html);
+    return c.json({ html, saved_path: savedPath });
   });
 
   return app;

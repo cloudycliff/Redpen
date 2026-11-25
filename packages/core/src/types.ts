@@ -132,10 +132,30 @@ export interface TitleCandidate {
   selected: boolean;
 }
 
+export type WechatThemeId = "editorial_ink" | "calm_slate" | "minimal_serif";
+
+export interface IllustrationIdea {
+  id: string;
+  placement: string;
+  concept: string;
+  style: string;
+  prompt_hint: string;
+}
+
+export interface WechatPackaging {
+  theme: WechatThemeId;
+  highlight_load_bearing: boolean;
+  digest: string;
+  digest_candidates: string[];
+  illustration_ideas: IllustrationIdea[];
+  generated_at?: string;
+}
+
 export interface PublishMeta {
   platform: "wechat_mp";
   published_at: string | null;
   retrospective_note: string | null;
+  wechat_packaging?: WechatPackaging;
 }
 
 export interface ArticleMeta {

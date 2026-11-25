@@ -11,6 +11,10 @@
     "./types": {
       "types": "./src/types.ts",
       "default": "./src/types.ts"
+    },
+    "./wechat": {
+      "types": "./src/engines/wechatHtml.ts",
+      "default": "./src/engines/wechatHtml.ts"
     }
   },
   "scripts": {

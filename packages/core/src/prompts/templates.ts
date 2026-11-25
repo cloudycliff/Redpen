@@ -210,6 +210,28 @@ export const ARCHIVE_RETRIEVE_SYSTEM = `你是本地档案检索器。给定当�
   "experience_ids": ["exp-001"]
 }`;
 
+export const WECHAT_PACKAGING_SYSTEM = `你是微信公众号长文视觉与发布顾问。文章正文已由作者写定，你的任务仅限于辅助发布包装（绝不改写正文）：
+
+1. digest_candidates：生成 3 条不同切入角度的公众号文章摘要（每条严格 45–110 字，适配微信转发卡片与摘要栏；克制、有信息密度、忠实于承重句，禁止营销号套路）。
+2. illustration_ideas：给出 3–4 条克制且能增强理解的配图思路建议（不建议堆砌无意义装饰图）：
+   - placement：建议插入位置（如“封面头图”或“第 2 节开头，承接 XX 观点”）
+   - concept：具体画面构思（45字以内）
+   - style：推荐形式（如“极简结构示意图 / 纸墨隐喻插画 / 真实对比图表”）
+   - prompt_hint：可直接拿去生图或画图的精炼描述词
+
+只返回严格合法的 JSON：
+{
+  "digest_candidates": ["摘要1", "摘要2", "摘要3"],
+  "illustration_ideas": [
+    {
+      "placement": "封面头图",
+      "concept": "...",
+      "style": "极简隐喻插画",
+      "prompt_hint": "..."
+    }
+  ]
+}`;
+
 export function formatWritingIntent(intent: WritingIntent): string {
   const parts: string[] = [];
   if (intent.raw_note?.trim()) parts.push(`作者自述初衷：${intent.raw_note.trim()}`);

@@ -5,6 +5,9 @@ import {
   CheckCircle2,
   Copy,
   Crosshair,
+  Eye,
+  FileEdit,
+  Image as ImageIcon,
   Loader2,
   RefreshCw,
   ShieldAlert,
@@ -17,8 +20,10 @@ import type {
   FindingStatus,
   RiskSeverity,
   StanceRecord,
+  WechatThemeId,
 } from "@writing/core/types";
 import { api } from "../../api/client";
+import { WechatPreviewPane } from "../../components/WechatPreviewPane";
 
 interface StagePublishGateProps {
   article: ArticleDetail;
@@ -43,6 +48,9 @@ export function StagePublishGate({
   onNotify,
 }: StagePublishGateProps) {
   const slug = article.meta.slug;
+  const existingPackaging = article.meta.publish_meta?.wechat_packaging;
+
+  const [leftMode, setLeftMode] = useState<"edit" | "wechat">("edit");
   const [title, setTitle] = useState(
     article.meta.title || article.meta.working_title
   );
@@ -52,6 +60,16 @@ export function StagePublishGate({
   const [checkingCompliance, setCheckingCompliance] = useState(false);
   const [locatingQuote, setLocatingQuote] = useState<string>("");
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  // WeChat packaging (theme, highlight, digest, illustration ideas)
+  const [wechatTheme, setWechatTheme] = useState<WechatThemeId>(
+    existingPackaging?.theme ?? "editorial_ink"
+  );
+  const [highlightLb, setHighlightLb] = useState<boolean>(
+    existingPackaging?.highlight_load_bearing ?? false
+  );
+  const [digest, setDigest] = useState<string>(existingPackaging?.digest ?? "");
+  const [generatingPackaging, setGeneratingPackaging] = useState(false);
 
   // Finalize & Archive preview modal state
   const [loadingFinalize, setLoadingFinalize] = useState(false);
@@ -63,7 +81,14 @@ export function StagePublishGate({
   const [committingFinalize, setCommittingFinalize] = useState(false);
 
   const persistEdits = async () => {
-    await api.updateArticleMeta(slug, { title: title.trim() });
+    await api.updateArticleMeta(slug, {
+      title: title.trim(),
+      wechat_packaging: {
+        theme: wechatTheme,
+        highlight_load_bearing: highlightLb,
+        digest: digest.trim(),
+      },
+    });
     await api.saveDraft(slug, article.meta.current_draft_version, body);
   };
 
@@ -119,18 +144,71 @@ export function StagePublishGate({
 
   const handleLocateQuote = (quote: string) => {
     if (!quote) return;
+    setLeftMode("edit");
     setLocatingQuote(quote);
-    const el = textareaRef.current;
-    if (!el) return;
-    const idx = body.indexOf(quote);
-    if (idx !== -1) {
-      el.focus();
-      el.setSelectionRange(idx, idx + quote.length);
-      // Approximate scroll position
-      const ratio = idx / Math.max(1, body.length);
-      el.scrollTop = Math.max(0, el.scrollHeight * ratio - 120);
-    } else {
-      onNotify("未在当前正文中精确命中该原句（可能已被你修改）");
+    setTimeout(() => {
+      const el = textareaRef.current;
+      if (!el) return;
+      const idx = body.indexOf(quote);
+      if (idx !== -1) {
+        el.focus();
+        el.setSelectionRange(idx, idx + quote.length);
+        const ratio = idx / Math.max(1, body.length);
+        el.scrollTop = Math.max(0, el.scrollHeight * ratio - 120);
+      } else {
+        onNotify("未在当前正文中精确命中该原句（可能已被你修改）");
+      }
+    }, 30);
+  };
+
+  const handleGeneratePackaging = async () => {
+    setGeneratingPackaging(true);
+    try {
+      await persistEdits();
+      const res = await api.generateWechatPackaging(slug);
+      setDigest(res.packaging.digest);
+      await onRefresh();
+      onNotify("已生成公众号摘要候选与配图思路建议");
+    } catch (err) {
+      onError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setGeneratingPackaging(false);
+    }
+  };
+
+  const handleThemeChange = async (nextTheme: WechatThemeId) => {
+    setWechatTheme(nextTheme);
+    try {
+      await api.updateArticleMeta(slug, {
+        wechat_packaging: { theme: nextTheme },
+      });
+    } catch {
+      // ignore non-critical preference sync error
+    }
+  };
+
+  const handleHighlightToggle = async (enabled: boolean) => {
+    setHighlightLb(enabled);
+    try {
+      await api.updateArticleMeta(slug, {
+        wechat_packaging: { highlight_load_bearing: enabled },
+      });
+    } catch {
+      // ignore
+    }
+  };
+
+  const handleExportHtml = async () => {
+    try {
+      await persistEdits();
+      await api.exportWechatHtml(slug, {
+        theme: wechatTheme,
+        highlight_load_bearing: highlightLb,
+        markdown: body,
+      });
+      onNotify(`已保存排版文件至 vault/articles/${slug}/wechat.html`);
+    } catch (err) {
+      onError(err instanceof Error ? err.message : String(err));
     }
   };
 
@@ -188,90 +266,149 @@ export function StagePublishGate({
     }
   };
 
+  const copyText = async (text: string, label: string) => {
+    await navigator.clipboard.writeText(text);
+    onNotify(`已复制${label}到剪贴板`);
+  };
+
   const copyFinalMarkdown = async () => {
     const md =
       article.final_markdown ||
       `# ${title.trim() || article.meta.working_title}\n\n${body.trim()}\n`;
-    await navigator.clipboard.writeText(md);
-    onNotify("已复制公众号长文 Markdown 到剪贴板");
+    await copyText(md, "公众号长文 Markdown");
   };
 
   const openRiskCount =
     article.compliance?.findings.filter((f) => f.status === "open").length ?? 0;
+  const lockedLbTexts = article.meta.load_bearing_sentences
+    .filter((s) => s.locked)
+    .map((s) => s.text);
+  const digestCandidates = existingPackaging?.digest_candidates ?? [];
+  const illustrationIdeas = existingPackaging?.illustration_ideas ?? [];
 
   return (
     <div className="flex-1 flex min-h-0 overflow-hidden">
-      {/* Left Pane: Editable Final Title & Body */}
+      {/* Left Pane: Mode Switch (Edit Final vs WeChat Formatted Preview) */}
       <div className="flex-1 flex flex-col min-w-0 border-r border-[#E7E4DC] bg-[#FCFBF8]">
-        {article.meta.stage === "finalized" && (
-          <div className="flex items-center justify-between gap-3 px-5 py-2.5 bg-emerald-50 border-b border-emerald-200 text-xs text-emerald-950">
-            <div className="flex items-center gap-2 font-medium">
-              <CheckCircle2 size={15} className="text-emerald-700" />
-              <span>
-                本篇已定稿归档至 vault/articles/{slug}/final.md
-              </span>
-            </div>
+        {/* Mode Switcher Bar */}
+        <div className="flex items-center justify-between gap-3 px-5 py-2.5 border-b border-[#E7E4DC] bg-white">
+          <div className="flex items-center gap-1.5">
             <button
-              onClick={copyFinalMarkdown}
-              className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md bg-emerald-700 text-white hover:bg-emerald-800 font-medium"
+              type="button"
+              onClick={() => setLeftMode("edit")}
+              className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium transition ${
+                leftMode === "edit"
+                  ? "bg-[#1F1E1C] text-white"
+                  : "bg-[#F3F1EB] text-[#57534E] hover:bg-[#E7E4DC]"
+              }`}
             >
-              <Copy size={13} /> 复制 Markdown
+              <FileEdit size={13} /> 编辑定稿
+            </button>
+            <button
+              type="button"
+              onClick={async () => {
+                await persistEdits();
+                setLeftMode("wechat");
+              }}
+              className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium transition ${
+                leftMode === "wechat"
+                  ? "bg-[#07C160] text-white"
+                  : "bg-[#F3F1EB] text-[#57534E] hover:bg-[#E7E4DC]"
+              }`}
+            >
+              <Eye size={13} /> 公众号排版预览
             </button>
           </div>
-        )}
 
-        <div className="px-6 pt-5 pb-3 border-b border-[#E7E4DC] bg-white">
-          <label className="block text-[11px] font-semibold uppercase tracking-wider text-[#78716C] mb-1">
-            公众号定稿标题
-          </label>
-          <input
-            type="text"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            onBlur={() => void persistEdits()}
-            placeholder="从右侧挑选候选标题，或直接在这里微调定稿标题..."
-            className="w-full text-xl font-semibold text-[#1F1E1C] bg-transparent focus:outline-none placeholder:text-[#A8A29E]"
-          />
-        </div>
-
-        {locatingQuote && (
-          <div className="px-6 py-2 bg-rose-50 border-b border-rose-200 flex items-center justify-between text-xs text-rose-900">
-            <span className="truncate">
-              已定位风险句：「{locatingQuote}」（你可以直接在下方脱敏修改，改完后右侧点「改完复检」）
+          {article.meta.stage === "finalized" && (
+            <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-800">
+              <CheckCircle2 size={14} className="text-emerald-700" />
+              已定稿归档
             </span>
-            <button
-              onClick={() => setLocatingQuote("")}
-              className="text-rose-700 hover:text-rose-950 shrink-0 ml-2"
-            >
-              <X size={13} />
-            </button>
-          </div>
+          )}
+        </div>
+
+        {leftMode === "wechat" ? (
+          <WechatPreviewPane
+            title={title}
+            markdown={body}
+            digest={digest}
+            theme={wechatTheme}
+            highlightLoadBearing={highlightLb}
+            loadBearingSentences={lockedLbTexts}
+            onChangeTheme={(t) => void handleThemeChange(t)}
+            onToggleHighlight={(v) => void handleHighlightToggle(v)}
+            onExportHtml={handleExportHtml}
+            onNotify={onNotify}
+            onError={onError}
+          />
+        ) : (
+          <>
+            <div className="px-6 pt-5 pb-3 border-b border-[#E7E4DC] bg-white">
+              <label className="block text-[11px] font-semibold uppercase tracking-wider text-[#78716C] mb-1">
+                公众号定稿标题
+              </label>
+              <input
+                type="text"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                onBlur={() => void persistEdits()}
+                placeholder="从右侧挑选候选标题，或直接在这里微调定稿标题..."
+                className="w-full text-xl font-semibold text-[#1F1E1C] bg-transparent focus:outline-none placeholder:text-[#A8A29E]"
+              />
+            </div>
+
+            {locatingQuote && (
+              <div className="px-6 py-2 bg-rose-50 border-b border-rose-200 flex items-center justify-between text-xs text-rose-900">
+                <span className="truncate">
+                  已定位风险句：「{locatingQuote}」（可直接脱敏修改，改完后右侧点「改完复检」）
+                </span>
+                <button
+                  onClick={() => setLocatingQuote("")}
+                  className="text-rose-700 hover:text-rose-950 shrink-0 ml-2"
+                >
+                  <X size={13} />
+                </button>
+              </div>
+            )}
+
+            <div className="flex-1 overflow-y-auto px-6 py-5">
+              <div className="max-w-2xl mx-auto h-full flex flex-col">
+                <textarea
+                  ref={textareaRef}
+                  value={body}
+                  onChange={(e) => setBody(e.target.value)}
+                  onBlur={() => void persistEdits()}
+                  className="flex-1 w-full min-h-[460px] bg-transparent prose-editor text-[16px] text-[#1F1E1C] focus:outline-none resize-none"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between px-5 py-3 border-t border-[#E7E4DC] bg-white text-xs text-[#78716C]">
+              <span>{body.replace(/\s+/g, "").length} 字</span>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={copyFinalMarkdown}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#D6D3CB] text-[#292524] hover:bg-[#FAF9F5]"
+                >
+                  <Copy size={13} /> 复制 Markdown
+                </button>
+                <button
+                  onClick={async () => {
+                    await persistEdits();
+                    setLeftMode("wechat");
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#07C160] text-white hover:bg-[#06AD56] font-medium"
+                >
+                  <Eye size={13} /> 预览并复制公众号排版
+                </button>
+              </div>
+            </div>
+          </>
         )}
-
-        <div className="flex-1 overflow-y-auto px-6 py-5">
-          <div className="max-w-2xl mx-auto h-full flex flex-col">
-            <textarea
-              ref={textareaRef}
-              value={body}
-              onChange={(e) => setBody(e.target.value)}
-              onBlur={() => void persistEdits()}
-              className="flex-1 w-full min-h-[460px] bg-transparent prose-editor text-[16px] text-[#1F1E1C] focus:outline-none resize-none"
-            />
-          </div>
-        </div>
-
-        <div className="flex items-center justify-between px-5 py-3 border-t border-[#E7E4DC] bg-white text-xs text-[#78716C]">
-          <span>{body.replace(/\s+/g, "").length} 字</span>
-          <button
-            onClick={copyFinalMarkdown}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#D6D3CB] text-[#292524] hover:bg-[#FAF9F5]"
-          >
-            <Copy size={13} /> 复制当前 Markdown
-          </button>
-        </div>
       </div>
 
-      {/* Right Pane: Title Co-creation + Compliance & Privacy Gate */}
+      {/* Right Pane: Title Co-creation + Compliance & Privacy Gate + Digest & Illustration Ideas */}
       <div className="w-[440px] xl:w-[490px] shrink-0 flex flex-col bg-white min-h-0">
         <div className="flex-1 overflow-y-auto p-4 space-y-6">
           {/* 1. Title Co-creation */}
@@ -282,7 +419,7 @@ export function StagePublishGate({
                   1. 标题共创
                 </h3>
                 <p className="text-[11px] text-[#78716C]">
-                  系统唯一允许给成品候选的环节，围绕已锁定的承重句多角度切入
+                  围绕已锁定的承重句，提供多切入角度候选标题
                 </p>
               </div>
             </div>
@@ -292,7 +429,7 @@ export function StagePublishGate({
                 type="text"
                 value={angleHint}
                 onChange={(e) => setAngleHint(e.target.value)}
-                placeholder="可选：补充期望风格（如“克制冷静”“带一点反常识”）"
+                placeholder="可选：期望风格（如“克制冷静”“带一点反常识”）"
                 className="flex-1 rounded-lg border border-[#D6D3CB] bg-[#FCFBF8] px-2.5 py-1.5 text-xs focus:outline-none focus:border-[#B45309]"
               />
               <button
@@ -366,7 +503,7 @@ export function StagePublishGate({
                   2. 双重合规与隐私审查
                 </h3>
                 <p className="text-[11px] text-[#78716C]">
-                  独立审查：平台违法违规雷区 + 个人/公司直接与隐性反推隐私风险
+                  排查平台违规雷区 + 个人/公司直接与隐性反推隐私风险
                 </p>
               </div>
               <button
@@ -485,6 +622,134 @@ export function StagePublishGate({
                     </div>
                   );
                 })}
+              </div>
+            )}
+          </section>
+
+          {/* 3. WeChat Digest & Illustration Ideas */}
+          <section className="pt-4 border-t border-[#E7E4DC]">
+            <div className="flex items-center justify-between gap-2 mb-2.5">
+              <div>
+                <h3 className="text-sm font-semibold text-[#1F1E1C] flex items-center gap-1.5">
+                  <ImageIcon size={15} className="text-amber-700" />
+                  3. 公众号摘要与配图思路
+                </h3>
+                <p className="text-[11px] text-[#78716C]">
+                  适配微信摘要栏（≤120 字）+ 克制的视觉配图构思与生图描述
+                </p>
+              </div>
+              <button
+                onClick={handleGeneratePackaging}
+                disabled={generatingPackaging}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-[#1F1E1C] text-white hover:bg-[#3A3834] disabled:opacity-50 shrink-0"
+              >
+                {generatingPackaging ? (
+                  <Loader2 size={13} className="animate-spin" />
+                ) : (
+                  <Sparkles size={13} />
+                )}
+                {digestCandidates.length > 0 ? "重新生成" : "生成摘要与配图"}
+              </button>
+            </div>
+
+            {/* Editable WeChat Digest Box */}
+            <div className="rounded-lg border border-[#E7E4DC] bg-[#FAF9F5] p-3 space-y-2 mb-3">
+              <div className="flex items-center justify-between text-xs">
+                <span className="font-medium text-[#292524]">
+                  公众号文章摘要
+                </span>
+                <div className="flex items-center gap-2">
+                  <span
+                    className={`text-[11px] ${
+                      digest.length > 120 ? "text-rose-700 font-medium" : "text-[#78716C]"
+                    }`}
+                  >
+                    {digest.length} / 120 字
+                  </span>
+                  {digest.trim() && (
+                    <button
+                      type="button"
+                      onClick={() => void copyText(digest.trim(), "文章摘要")}
+                      className="inline-flex items-center gap-1 text-[11px] text-amber-800 hover:underline"
+                    >
+                      <Copy size={11} /> 复制
+                    </button>
+                  )}
+                </div>
+              </div>
+              <textarea
+                rows={2}
+                value={digest}
+                onChange={(e) => setDigest(e.target.value)}
+                onBlur={() => void persistEdits()}
+                placeholder="点下方候选摘要快速填入，或自己写一句 50–120 字的公众号摘要..."
+                className="w-full rounded-md border border-[#D6D3CB] bg-white px-2.5 py-1.5 text-xs text-[#1F1E1C] leading-relaxed focus:outline-none focus:border-[#B45309] resize-none"
+              />
+              {digestCandidates.length > 0 && (
+                <div className="space-y-1.5 pt-1">
+                  <div className="text-[11px] text-[#78716C]">
+                    候选摘要（点击填入）：
+                  </div>
+                  {digestCandidates.map((cand, idx) => (
+                    <button
+                      key={idx}
+                      type="button"
+                      onClick={() => {
+                        setDigest(cand);
+                        void api.updateArticleMeta(slug, {
+                          wechat_packaging: { digest: cand },
+                        });
+                      }}
+                      className="w-full text-left rounded-md border border-[#E7E4DC] bg-white hover:border-amber-400 px-2.5 py-1.5 text-xs text-[#44403C] leading-relaxed transition"
+                    >
+                      {idx + 1}. {cand}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Illustration Ideas */}
+            {illustrationIdeas.length > 0 && (
+              <div className="space-y-2">
+                <div className="text-xs font-medium text-[#292524]">
+                  配图思路建议（{illustrationIdeas.length}）
+                </div>
+                {illustrationIdeas.map((idea) => (
+                  <div
+                    key={idea.id}
+                    className="rounded-lg border border-[#E7E4DC] bg-[#FAF9F5] p-3 text-xs space-y-1.5"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-semibold text-[#1F1E1C]">
+                        {idea.placement}
+                      </span>
+                      <span className="px-1.5 py-0.5 rounded bg-white border border-[#E7E4DC] text-[10px] text-[#57534E]">
+                        {idea.style}
+                      </span>
+                    </div>
+                    <p className="text-[#44403C] leading-relaxed">
+                      {idea.concept}
+                    </p>
+                    {idea.prompt_hint && (
+                      <div className="flex items-start justify-between gap-2 rounded bg-white border border-[#E7E4DC] px-2.5 py-1.5 text-[11px] text-[#57534E]">
+                        <span className="leading-relaxed">
+                          生图参考：{idea.prompt_hint}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            void copyText(idea.prompt_hint, "配图描述词")
+                          }
+                          className="text-amber-800 hover:text-amber-950 shrink-0"
+                          title="复制描述词"
+                        >
+                          <Copy size={12} />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ))}
               </div>
             )}
           </section>

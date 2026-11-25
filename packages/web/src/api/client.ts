@@ -19,6 +19,8 @@ import type {
   TextDiffPart,
   TitleCandidate,
   TopicCluster,
+  WechatPackaging,
+  WechatThemeId,
   WritingIntent,
 } from "@writing/core/types";
 
@@ -187,6 +189,7 @@ export const api = {
       writing_intent?: Partial<WritingIntent>;
       load_bearing_sentences?: LoadBearingSentence[];
       selected_title_id?: string;
+      wechat_packaging?: Partial<WechatPackaging>;
     }
   ) =>
     request<{ meta: ArticleMeta }>(
@@ -359,6 +362,26 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
+  generateWechatPackaging: (slug: string) =>
+    request<{ packaging: WechatPackaging; meta: ArticleMeta }>(
+      `/api/articles/${encodeURIComponent(slug)}/wechat-packaging`,
+      { method: "POST" }
+    ),
+  exportWechatHtml: (
+    slug: string,
+    payload: {
+      theme: WechatThemeId;
+      highlight_load_bearing: boolean;
+      markdown: string;
+    }
+  ) =>
+    request<{ html: string; saved_path: string }>(
+      `/api/articles/${encodeURIComponent(slug)}/wechat-html`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      }
+    ),
 
   // Archive
   getArchive: () =>
